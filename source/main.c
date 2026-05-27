@@ -1,11 +1,9 @@
 // pctltcp-web - Switch Parental Control Web Server
 // =============================================================
-// NRO homebrew with dual servers:
-//   - TCP server (port 6000) for PC client
-//   - HTTP server (port 8080) with embedded mobile Web UI
+// NRO homebrew with HTTP server (port 8080) with embedded mobile Web UI
 //
 // Uses pctl IPC for parental control play timer operations.
-// pctl + sockets initialized in main(), servers in pthreads.
+// pctl + sockets initialized in main(), HTTP server in pthread.
 //
 // Compatible: Atmosphere CFW + fw 22.1.0
 // =============================================================
@@ -49,14 +47,6 @@ static void getIpAddressStr(char *buf, size_t buf_size)
 {
     buf[0] = '\0';
 
-    /* Method 1: tcp_server_get_ip() */
-    const char *ip = tcp_server_get_ip();
-    if (ip && ip[0] != '\0' && strcmp(ip, "0.0.0.0") != 0) {
-        snprintf(buf, buf_size, "%s", ip);
-        return;
-    }
-
-    /* Method 2: nifm */
     u32 ipaddr = 0;
     Result rc = nifmGetCurrentIpAddress(&ipaddr);
     if (R_SUCCEEDED(rc) && ipaddr != 0) {
@@ -78,19 +68,17 @@ int main(int argc, char **argv)
     consoleInit(NULL);
     initPad();
 
-    // Splash screen
     consoleClear();
     printf("\n");
     printSeparator();
     printf("   Switch Parental Control\n");
     printf("   Web Server - NRO Edition\n");
-    printf("   v" VERSION_S " | by gmaitxqqq\n");
+    printf("   v%s | by gmaitxqqq\n", VERSION_S);
     printSeparator();
     printf("\n");
     printf("   Initializing...\n");
     consoleFlush();
 
-    // Initialize pctl service
     Result pctl_rc = pctl_init();
     if (R_FAILED(pctl_rc)) {
         printf("   pctl service: FAILED 0x%08X\n", (unsigned)pctl_rc);
@@ -101,7 +89,6 @@ int main(int argc, char **argv)
         consoleFlush();
     }
 
-    // Initialize socket driver
     Result sock_rc = socketInitializeDefault();
     if (R_FAILED(sock_rc)) {
         printf("   socket init: FAILED 0x%08X\n", (unsigned)sock_rc);
@@ -118,31 +105,20 @@ int main(int argc, char **argv)
     printf("   Socket driver: OK\n");
     consoleFlush();
 
-    // Initialize nifm for IP
     Result nifm_rc = nifmInitialize(NifmServiceType_User);
     printf("   Network: %s\n", R_SUCCEEDED(nifm_rc) ? "OK" : "N/A");
     consoleFlush();
 
-    // Start TCP server
-    if (R_FAILED(tcp_rc)) {
-    } else {
-        printf("   TCP server: OK (port %d)\n", TCP_PORT);
-    }
-    consoleFlush();
-
-    // Start HTTP server
     http_server_start();
     printf("   HTTP server: %s (port %d)\n",
         http_server_is_running() ? "OK" : "FAILED", HTTP_PORT);
     consoleFlush();
 
-    // Get IP
     char ip_str[64];
     getIpAddressStr(ip_str, sizeof(ip_str));
     printf("   IP Address: %s\n", ip_str);
     consoleFlush();
 
-    // Ready
     printf("\n");
     printSeparator();
     printf("   READY\n");
@@ -150,7 +126,6 @@ int main(int argc, char **argv)
     printf("\n");
     if (http_server_is_running())
         printf("   Web UI:  http://%s:%d\n", ip_str, HTTP_PORT);
-    if (R_SUCCEEDED(tcp_rc))
     printf("\n");
     printf("   Open the URL on your phone!\n");
     printf("\n");
@@ -159,16 +134,14 @@ int main(int argc, char **argv)
     printSeparator();
     consoleFlush();
 
-    svcSleepThread(1000000000ULL);  // 1 sec splash
+    svcSleepThread(1000000000ULL);
 
-    // Main loop
     while (appletMainLoop()) {
         u64 k = padGetDown();
 
         if (k & HidNpadButton_B) break;
 
         if (k & HidNpadButton_A) {
-            // Refresh display
             char refresh_ip[64];
             getIpAddressStr(refresh_ip, sizeof(refresh_ip));
 
@@ -176,7 +149,7 @@ int main(int argc, char **argv)
             printf("\n");
             printSeparator();
             printf("   Switch Parental Control Web\n");
-            printf("   v" VERSION_S " | Clients: %u\n", tcp_server_client_count());
+            printf("   v%s\n", VERSION_S);
             printSeparator();
             printf("\n");
             printf("   IP: %s\n", refresh_ip);
@@ -210,7 +183,6 @@ int main(int argc, char **argv)
         svcSleepThread(50000000ULL);
     }
 
-    // Cleanup
     printf("\n   Shutting down...\n");
     consoleFlush();
 

@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <pthread.h>
 
 /* ------------------------------------------------------------------ */
@@ -230,82 +231,8 @@ static void api_version(int fd)
 }
 
 /* ------------------------------------------------------------------ */
-/* Route dispatcher                                                    */
-/* ------------------------------------------------------------------ */
-static void handle_request(int fd)
-{
-    char buf[2048];
-    int n = http_read_request(fd, buf, sizeof(buf));
-    if (n <= 0) { close(fd); return; }
-
-    char method[16] = {0}, path[256] = {0};
-    sscanf(buf, "%15s %255s", method, path);
-
-    /* CORS preflight */
-    if (strcmp(method, "OPTIONS") == 0) {
-        http_send(fd, "204 No Content", "text/plain", "");
-        close(fd);
-        return;
-    }
-
-    char *body = strstr(buf, "\r\n\r\n");
-    if (body) body += 4;
-
-    if (strcmp(path, "/") == 0 && strcmp(method, "GET") == 0) {
-        http_send(fd, "200 OK", "text/html; charset=utf-8", WEB_HTML);
-    } else if (strcmp(path, "/api/status") == 0) {
-        api_status(fd);
-    } else if (strcmp(path, "/api/settings") == 0) {
-        api_settings(fd);
-    } else if (strcmp(path, "/api/set") == 0) {
-        api_set(fd, body ? body : "");
-    } else if (strcmp(path, "/api/set_day") == 0) {
-        api_set_day(fd, body ? body : "");
-    } else if (strcmp(path, "/api/start") == 0) {
-        api_start(fd);
-    } else if (strcmp(path, "/api/stop") == 0) {
-        api_stop(fd);
-    } else if (strcmp(path, "/api/reset") == 0) {
-        api_reset(fd);
-    } else if (strcmp(path, "/api/version") == 0) {
-        api_version(fd);
-    } else {
-        http_send(fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
-    }
-
-    close(fd);
-}
-
-/* ------------------------------------------------------------------ */
-/* Server thread                                                       */
-/* ------------------------------------------------------------------ */
-static void *http_thread_func(void *arg)
-{
-    (void)arg;
-
-    while (s_running) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(s_server_fd, &rfds);
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 500000;
-
-        int ret = select(s_server_fd + 1, &rfds, NULL, NULL, &tv);
-        if (ret <= 0) continue;
-
-        if (FD_ISSET(s_server_fd, &rfds)) {
-            int client_fd = accept(s_server_fd, NULL, NULL);
-            if (client_fd >= 0)
-                handle_request(client_fd);
-        }
-    }
-
-    return NULL;
-}
-
-/* ------------------------------------------------------------------ */
 /* Embedded Web UI (mobile-responsive HTML+CSS+JS)                     */
+/* Defined here so handle_request() can reference it.                  */
 /* ------------------------------------------------------------------ */
 static const char *WEB_HTML =
 "<!DOCTYPE html>"
@@ -424,6 +351,81 @@ static const char *WEB_HTML =
 "</script>"
 "</body>"
 "</html>";
+
+/* ------------------------------------------------------------------ */
+/* Route dispatcher                                                    */
+/* ------------------------------------------------------------------ */
+static void handle_request(int fd)
+{
+    char buf[2048];
+    int n = http_read_request(fd, buf, sizeof(buf));
+    if (n <= 0) { close(fd); return; }
+
+    char method[16] = {0}, path[256] = {0};
+    sscanf(buf, "%15s %255s", method, path);
+
+    /* CORS preflight */
+    if (strcmp(method, "OPTIONS") == 0) {
+        http_send(fd, "204 No Content", "text/plain", "");
+        close(fd);
+        return;
+    }
+
+    char *body = strstr(buf, "\r\n\r\n");
+    if (body) body += 4;
+
+    if (strcmp(path, "/") == 0 && strcmp(method, "GET") == 0) {
+        http_send(fd, "200 OK", "text/html; charset=utf-8", WEB_HTML);
+    } else if (strcmp(path, "/api/status") == 0) {
+        api_status(fd);
+    } else if (strcmp(path, "/api/settings") == 0) {
+        api_settings(fd);
+    } else if (strcmp(path, "/api/set") == 0) {
+        api_set(fd, body ? body : "");
+    } else if (strcmp(path, "/api/set_day") == 0) {
+        api_set_day(fd, body ? body : "");
+    } else if (strcmp(path, "/api/start") == 0) {
+        api_start(fd);
+    } else if (strcmp(path, "/api/stop") == 0) {
+        api_stop(fd);
+    } else if (strcmp(path, "/api/reset") == 0) {
+        api_reset(fd);
+    } else if (strcmp(path, "/api/version") == 0) {
+        api_version(fd);
+    } else {
+        http_send(fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
+    }
+
+    close(fd);
+}
+
+/* ------------------------------------------------------------------ */
+/* Server thread                                                       */
+/* ------------------------------------------------------------------ */
+static void *http_thread_func(void *arg)
+{
+    (void)arg;
+
+    while (s_running) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s_server_fd, &rfds);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 500000;
+
+        int ret = select(s_server_fd + 1, &rfds, NULL, NULL, &tv);
+        if (ret <= 0) continue;
+
+        if (FD_ISSET(s_server_fd, &rfds)) {
+            int client_fd = accept(s_server_fd, NULL, NULL);
+            if (client_fd >= 0)
+                handle_request(client_fd);
+        }
+    }
+
+    return NULL;
+}
 
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */

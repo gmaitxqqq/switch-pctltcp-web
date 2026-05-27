@@ -1,0 +1,46 @@
+name: Build .nro
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [build]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          make clean
+          make -j$(nproc)
+
+      - name: Upload .nro
+        uses: actions/upload-artifact@v4
+        with:
+          name: pctltcp-web
+          path: pctltcp-web.nro
+          retention-days: 30
+
+      - name: Create release zip
+        run: |
+          mkdir -p release
+          cp pctltcp-web.nro release/
+          cd release && zip -r ../pctltcp-web.zip pctltcp-web.nro
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: pctltcp-web-release
+          path: pctltcp-web.zip
+          retention-days: 30

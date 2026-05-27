@@ -1,57 +1,107 @@
-// pctltcp-web — pctl Handler Header
-// ====================================
-// Parental Control service (pctl) IPC wrapper.
-// Provides functions to read/write play timer settings.
-//
-// PlayTimerSettings layout: u16[34]
-//   raw[0] = header (0x0101)
-//   raw[1..6] = reserved
-//   raw[7+4n+0..1] = per-day block (day n, n=0..6)
-//   raw[7+4n+2] = daily limit in minutes (0xFFFF = no limit)
-//   raw[7+4n+3] = reserved
-//
-// Switch weekday: 0=Sunday, 1=Monday, ..., 6=Saturday
-// ====================================
+/**
+ * pctl_handler.h - Nintendo Switch PCTL service wrapper
+ *
+ * Provides high-level functions for interacting with the Switch
+ * parental control (pctl) play timer service.
+ *
+ * Uses libnx pctlInitialize() + serviceDispatch*() for proper IPC.
+ *
+ * Sysmodule compatibility:
+ *   pctlInitialize() tries pctl:a -> pctl:s -> pctl:r -> pctl
+ *   In sysmodule context, pctl:a is likely denied but pctl:s should work.
+ *   Read commands work on pctl:s; write commands (195101) may need pctl:a.
+ *
+ * Based on NX-Pctl-Manager / switch-parental-timer pctl IPC research:
+ *   - GetPlayTimerSettings (cmd 145601) returns 0x44 bytes for FW 18.0.0+
+ *   - SetPlayTimerSettingsForDebug (cmd 195101) takes 0x44 bytes
+ *   - Layout: u16[34], day n at [7+4n] (flag), [7+4n+2] (minutes)
+ *   - Day order: Sun=0, Mon=1, ..., Sat=6
+ */
 
 #ifndef PCTL_HANDLER_H
 #define PCTL_HANDLER_H
 
 #include <switch.h>
-#include <stdbool.h>
 
-// ---- Constants ----
-#define PCTL_SETTINGS_SIZE 34
+#define PCTL_PLAY_TIMER_SETTINGS_SIZE   0x44   /* 68 bytes */
+#define PCTL_SETTINGS_U16_COUNT         (PCTL_PLAY_TIMER_SETTINGS_SIZE / 2)  /* 34 */
+#define PCTL_DAYS                       7      /* Sun..Sat */
+#define PCTL_DAY_FLAG_OFFSET(n)         (7 + 4 * (n))     /* u16 offset */
+#define PCTL_DAY_MINUTES_OFFSET(n)      (7 + 4 * (n) + 2) /* u16 offset */
+#define PT_DAY_NOLIMIT                  0xFFFFu
 
-#define PCTL_DAY_BLOCK(day)     ((day) * 4)
-#define PCTL_DAY_MINUTES(day)   (7 + PCTL_DAY_BLOCK(day) + 2)
-#define PCTL_DAY_MINUTES_OFFSET(day) PCTL_DAY_MINUTES(day)
-
-#define PCTL_NOLIMIT 0xFFFFu
-
-// ---- Types ----
+/* Play timer settings: raw u16[34] */
+#pragma pack(push, 1)
 typedef struct {
-    u16 raw[PCTL_SETTINGS_SIZE];
+    u16 raw[PCTL_SETTINGS_U16_COUNT];  /* 68 bytes = 0x44 */
 } PlayTimerSettings;
+#pragma pack(pop)
 
-// ---- Init/Exit ----
-void pctl_init(void);
+_Static_assert(sizeof(PlayTimerSettings) == PCTL_PLAY_TIMER_SETTINGS_SIZE,
+    "PlayTimerSettings must be 0x44 bytes");
+
+#define MINUTES_TO_NS(m)  ((u64)(m) * 60ULL * 1000000000ULL)
+#define NS_TO_MINUTES(ns) ((u32)((ns) / (60ULL * 1000000000ULL)))
+
+/**
+ * Initialize pctl service using libnx pctlInitialize().
+ * Works in both .nro and sysmodule context (pctl:s fallback).
+ */
+Result pctl_init(void);
+
+/**
+ * Release all pctl resources.
+ */
 void pctl_exit(void);
+
+/** Check if pctl has been successfully initialized. */
 bool pctl_is_initialized(void);
 
-// ---- Timer Control ----
+/** Start the play timer. */
 Result pctl_start_play_timer(void);
+
+/** Stop the play timer. */
 Result pctl_stop_play_timer(void);
+
+/** Check if play timer is enabled. */
+Result pctl_is_enabled(bool *enabled);
+
+/** Get remaining play time in nanoseconds. */
+Result pctl_get_remaining_time(u64 *remaining_ns);
+
+/** Check if system is restricted by play timer. */
+Result pctl_is_restricted(bool *restricted);
+
+/** Read current play timer settings (raw 0x44 bytes). */
+Result pctl_get_settings(PlayTimerSettings *settings);
+
+/** Write play timer settings. */
+Result pctl_set_settings(const PlayTimerSettings *settings);
+
+/**
+ * Get play time limit for a specific day in minutes.
+ * @param day 0=Sun..6=Sat, 7=All (returns max)
+ * @param minutes Output: minutes for that day (0=unlimited)
+ */
+Result pctl_get_day_limit_minutes(int day, u32 *minutes);
+
+/**
+ * Set play time limit for a specific day in minutes.
+ * @param day 0=Sun..6=Sat
+ * @param minutes Time limit (0=unlimited=PT_DAY_NOLIMIT, or 1-1440)
+ */
+Result pctl_set_day_limit_minutes(int day, u32 minutes);
+
+/**
+ * Set all 7 days to the same limit.
+ * @param minutes Daily time limit (0=unlimited, 1-1440)
+ */
+Result pctl_set_daily_limit_minutes(u32 minutes);
+
+/** Get current daily limit (returns first day's value). */
+Result pctl_get_daily_limit_minutes(u32 *minutes);
+
+/** Reset current day's play time (stop + re-apply settings + start). */
 Result pctl_reset_play_time(void);
 
-// ---- Status Query ----
-Result pctl_is_enabled(bool *out_enabled);
-Result pctl_is_restricted(bool *out_restricted);
-Result pctl_get_remaining_time(u64 *out_nanoseconds);
-
-// ---- Settings ----
-Result pctl_get_settings(PlayTimerSettings *out);
-Result pctl_set_settings(const PlayTimerSettings *settings);
-Result pctl_set_uniform(int minutes);        // All 7 days same
-Result pctl_set_day(int day, int minutes);   // One specific day (0=Sun..6=Sat)
-
-#endif // PCTL_HANDLER_H
+#endif /* PCTL_HANDLER_H */

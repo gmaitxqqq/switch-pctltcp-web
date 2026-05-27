@@ -280,13 +280,15 @@ static void handle_api_status(int fd)
     // Get today's limit
     PlayTimerSettings settings;
     if (R_SUCCEEDED(pctl_get_settings(&settings))) {
-        int dow = 0; // TODO: get actual day of week from time
-        // Use setsys to get day
+        int dow = 0; u64 ts = 0; TimeCalendarAdditionalInfo info;
+        
+        u64 timestamp = 0;
         TimeCalendarTime cal;
-        if (R_SUCCEEDED(timeGetCurrentTime(TimeType_LocalSystemClock, NULL))) {
-            timeToCalendarTimeWithMyRule(NULL, NULL, &cal);
-            // cal.weekday: 0=Sun..6=Sat
-            dow = cal.weekday;
+        TimeCalendarAdditionalInfo info;
+        if (R_SUCCEEDED(timeGetCurrentTime(TimeType_LocalSystemClock, &timestamp))) {
+            timeToCalendarTimeWithMyRule(timestamp, &cal, &info);
+            // cal.wday: 0=Sun..6=Sat
+            dow = cal.wday;
         }
         u16 m = settings.raw[PCTL_DAY_MINUTES_OFFSET(dow)];
         daily_limit = (m == 0xFFFFu) ? 0 : (int)m;
@@ -582,7 +584,7 @@ void http_server_start(void)
     if (s_http_running) return;
     s_http_running = true;
     pthread_create(&s_http_thread, NULL, http_server_thread, NULL);
-    pthread_detach(&s_http_thread);
+    pthread_detach(s_http_thread);
 }
 
 void http_server_stop(void)

@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 
-#include "tcp_server.h"
 #include "pctl_handler.h"
 #include "http_server.h"
 
@@ -125,9 +124,7 @@ int main(int argc, char **argv)
     consoleFlush();
 
     // Start TCP server
-    Result tcp_rc = tcp_server_start();
     if (R_FAILED(tcp_rc)) {
-        printf("   TCP server: FAILED 0x%08X\n", (unsigned)tcp_rc);
     } else {
         printf("   TCP server: OK (port %d)\n", TCP_PORT);
     }
@@ -154,7 +151,6 @@ int main(int argc, char **argv)
     if (http_server_is_running())
         printf("   Web UI:  http://%s:%d\n", ip_str, HTTP_PORT);
     if (R_SUCCEEDED(tcp_rc))
-        printf("   TCP:     %s:%d\n", ip_str, TCP_PORT);
     printf("\n");
     printf("   Open the URL on your phone!\n");
     printf("\n");
@@ -185,7 +181,6 @@ int main(int argc, char **argv)
             printf("\n");
             printf("   IP: %s\n", refresh_ip);
             printf("   Web UI:  http://%s:%d\n", refresh_ip, HTTP_PORT);
-            printf("   TCP:     %s:%d\n", refresh_ip, TCP_PORT);
             printf("\n");
 
             if (R_SUCCEEDED(pctl_rc)) {
@@ -220,7 +215,6 @@ int main(int argc, char **argv)
     consoleFlush();
 
     http_server_stop();
-    tcp_server_stop();
 
     if (R_SUCCEEDED(nifm_rc)) nifmExit();
     if (R_SUCCEEDED(pctl_rc)) pctl_exit();

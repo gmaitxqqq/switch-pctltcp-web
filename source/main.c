@@ -228,7 +228,7 @@ int main(int argc, char **argv)
     tcp_server_stop();
     pctl_exit();
     socketExit();
-    consoleExit();
+    consoleExit(NULL);
 
     return 0;
 }

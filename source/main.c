@@ -1,15 +1,13 @@
-// pctltcp-web — Switch Parental Control Web Server (NRO)
+// pctltcp-web - Switch Parental Control Web Server
 // =============================================================
-// Pure .nro homebrew app with:
-//   - Console UI for on-device status display
-//   - Background TCP server (port 6000) for PC client compatibility
-//   - Background HTTP server (port 8080) for mobile web UI
-//   - pctl IPC for parental control play timer operations
+// NRO homebrew with dual servers:
+//   - TCP server (port 6000) for PC client
+//   - HTTP server (port 8080) with embedded mobile Web UI
 //
-// Mobile Web UI: Open http://<Switch-IP>:8080 in any browser
-// PC Client:     Connect to <Switch-IP>:6000 via TCP
+// Uses pctl IPC for parental control play timer operations.
+// pctl + sockets initialized in main(), servers in pthreads.
 //
-// Based on switch-pctltcp-nro v1.5.0
+// Compatible: Atmosphere CFW + fw 22.1.0
 // =============================================================
 
 #include <switch.h>
@@ -19,11 +17,8 @@
 #include <arpa/inet.h>
 
 #include "tcp_server.h"
-#include "http_server.h"
 #include "pctl_handler.h"
-
-// ---- Constants ----
-#define PT_DAY_NOLIMIT 0xFFFFu
+#include "http_server.h"
 
 // ---- Pad Input (new libnx API) ----
 static PadState g_pad;
@@ -51,37 +46,18 @@ static void consoleFlush(void)
     consoleUpdate(NULL);
 }
 
-static void waitForKey(void)
-{
-    printf("\n   Press any key to continue...\n");
-    consoleFlush();
-    while (appletMainLoop()) {
-        u64 k = padGetDown();
-        if (k) break;
-        consoleFlush();
-        svcSleepThread(10000000ULL);
-    }
-}
-
-// ---- Get Switch IP Address ----
 static void getIpAddressStr(char *buf, size_t buf_size)
 {
     buf[0] = '\0';
 
-    /* Method 1: tcp_server_get_ip() — most reliable (getsockname) */
+    /* Method 1: tcp_server_get_ip() */
     const char *ip = tcp_server_get_ip();
     if (ip && ip[0] != '\0' && strcmp(ip, "0.0.0.0") != 0) {
         snprintf(buf, buf_size, "%s", ip);
         return;
     }
 
-    /* Method 2: nifm fallback */
-    static bool s_nifm_tried = false;
-    if (!s_nifm_tried) {
-        nifmInitialize(NifmServiceType_User);
-        s_nifm_tried = true;
-    }
-
+    /* Method 2: nifm */
     u32 ipaddr = 0;
     Result rc = nifmGetCurrentIpAddress(&ipaddr);
     if (R_SUCCEEDED(rc) && ipaddr != 0) {
@@ -94,141 +70,161 @@ static void getIpAddressStr(char *buf, size_t buf_size)
     snprintf(buf, buf_size, "N/A");
 }
 
-// ---- Status Screen ----
-static const char *day_names[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+// ---- Main ----
 
-static void showStatus(void)
-{
-    consoleClear();
-    printf("\n");
-    printSeparator();
-    printf("   Switch Parental Control Web\n");
-    printf("   v" VERSION_S " | by gmaitxqqq\n");
-    printSeparator();
-    printf("\n");
-    consoleFlush();
-
-    char ip_str[64];
-    getIpAddressStr(ip_str, sizeof(ip_str));
-
-    printf("   TCP Server:  %s:%d (PC client)\n", ip_str, TCP_PORT);
-    printf("   HTTP Server: %s:%d (Web UI)\n", ip_str, HTTP_PORT);
-    printf("   Clients:     %u connected\n\n", tcp_server_client_count());
-    consoleFlush();
-
-    bool enabled = false, restricted = false;
-    u64 remaining_ns = 0;
-
-    if (R_SUCCEEDED(pctl_is_enabled(&enabled)))
-        printf("   Timer:       %s\n", enabled ? "Running" : "Stopped");
-    else
-        printf("   Timer:       (query failed)\n");
-
-    if (R_SUCCEEDED(pctl_is_restricted(&restricted)))
-        printf("   Restricted:  %s\n", restricted ? "YES (time up)" : "No");
-    else
-        printf("   Restricted:  (query failed)\n");
-
-    if (R_SUCCEEDED(pctl_get_remaining_time(&remaining_ns)) && remaining_ns > 0) {
-        u64 rem_min = remaining_ns / 60000000000ULL;
-        printf("   Remaining:   %llu min\n", (unsigned long long)rem_min);
-    }
-
-    printf("\n   Daily Time Limits (minutes):\n");
-    consoleFlush();
-
-    PlayTimerSettings settings;
-    if (R_SUCCEEDED(pctl_get_settings(&settings))) {
-        for (int i = 0; i < 7; i++) {
-            u16 m = settings.raw[PCTL_DAY_MINUTES_OFFSET(i)];
-            if (m == PT_DAY_NOLIMIT)
-                printf("     %s: No limit\n", day_names[i]);
-            else
-                printf("     %s: %u min (%uh %um)\n", day_names[i],
-                       m, m / 60, m % 60);
-        }
-    } else {
-        printf("     (Could not read timer settings)\n");
-    }
-
-    waitForKey();
-}
-
-// ---- Main Loop ----
 int main(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    (void)argc; (void)argv;
 
-    // Initialize services
-    socketInitializeDefault();
-    pctl_init();
-
-    // Console
     consoleInit(NULL);
     initPad();
 
-    // Start TCP server (port 6000) for PC client compatibility
-    tcp_server_start();
+    // Splash screen
+    consoleClear();
+    printf("\n");
+    printSeparator();
+    printf("   Switch Parental Control\n");
+    printf("   Web Server - NRO Edition\n");
+    printf("   v" VERSION_S " | by gmaitxqqq\n");
+    printSeparator();
+    printf("\n");
+    printf("   Initializing...\n");
+    consoleFlush();
 
-    // Start HTTP server (port 8080) for mobile web UI
+    // Initialize pctl service
+    Result pctl_rc = pctl_init();
+    if (R_FAILED(pctl_rc)) {
+        printf("   pctl service: FAILED 0x%08X\n", (unsigned)pctl_rc);
+        printf("   (CFW required for pctl features)\n");
+        consoleFlush();
+    } else {
+        printf("   pctl service: OK\n");
+        consoleFlush();
+    }
+
+    // Initialize socket driver
+    Result sock_rc = socketInitializeDefault();
+    if (R_FAILED(sock_rc)) {
+        printf("   socket init: FAILED 0x%08X\n", (unsigned)sock_rc);
+        printf("   Press any key to exit...\n");
+        consoleFlush();
+        while (appletMainLoop()) {
+            if (padGetDown()) break;
+            consoleFlush();
+            svcSleepThread(10000000ULL);
+        }
+        consoleExit(NULL);
+        return 1;
+    }
+    printf("   Socket driver: OK\n");
+    consoleFlush();
+
+    // Initialize nifm for IP
+    Result nifm_rc = nifmInitialize(NifmServiceType_User);
+    printf("   Network: %s\n", R_SUCCEEDED(nifm_rc) ? "OK" : "N/A");
+    consoleFlush();
+
+    // Start TCP server
+    Result tcp_rc = tcp_server_start();
+    if (R_FAILED(tcp_rc)) {
+        printf("   TCP server: FAILED 0x%08X\n", (unsigned)tcp_rc);
+    } else {
+        printf("   TCP server: OK (port %d)\n", TCP_PORT);
+    }
+    consoleFlush();
+
+    // Start HTTP server
     http_server_start();
+    printf("   HTTP server: %s (port %d)\n",
+        http_server_is_running() ? "OK" : "FAILED", HTTP_PORT);
+    consoleFlush();
 
-    // Main menu
-    int cursor = 0;
-    const int menu_count = 2;
-    const char *menu_items[] = {
-        "View Status",
-        "Exit",
-    };
+    // Get IP
+    char ip_str[64];
+    getIpAddressStr(ip_str, sizeof(ip_str));
+    printf("   IP Address: %s\n", ip_str);
+    consoleFlush();
 
-    bool done = false;
-    while (appletMainLoop() && !done) {
+    // Ready
+    printf("\n");
+    printSeparator();
+    printf("   READY\n");
+    printSeparator();
+    printf("\n");
+    if (http_server_is_running())
+        printf("   Web UI:  http://%s:%d\n", ip_str, HTTP_PORT);
+    if (R_SUCCEEDED(tcp_rc))
+        printf("   TCP:     %s:%d\n", ip_str, TCP_PORT);
+    printf("\n");
+    printf("   Open the URL on your phone!\n");
+    printf("\n");
+    printf("   A: Refresh display\n");
+    printf("   B: Exit\n");
+    printSeparator();
+    consoleFlush();
+
+    svcSleepThread(1000000000ULL);  // 1 sec splash
+
+    // Main loop
+    while (appletMainLoop()) {
         u64 k = padGetDown();
 
-        if (k & HidNpadButton_Up) {
-            cursor = (cursor - 1 + menu_count) % menu_count;
-        } else if (k & HidNpadButton_Down) {
-            cursor = (cursor + 1) % menu_count;
-        } else if (k & HidNpadButton_A) {
-            switch (cursor) {
-                case 0: showStatus(); break;
-                case 1: done = true; break;
+        if (k & HidNpadButton_B) break;
+
+        if (k & HidNpadButton_A) {
+            // Refresh display
+            char refresh_ip[64];
+            getIpAddressStr(refresh_ip, sizeof(refresh_ip));
+
+            consoleClear();
+            printf("\n");
+            printSeparator();
+            printf("   Switch Parental Control Web\n");
+            printf("   v" VERSION_S " | Clients: %u\n", tcp_server_client_count());
+            printSeparator();
+            printf("\n");
+            printf("   IP: %s\n", refresh_ip);
+            printf("   Web UI:  http://%s:%d\n", refresh_ip, HTTP_PORT);
+            printf("   TCP:     %s:%d\n", refresh_ip, TCP_PORT);
+            printf("\n");
+
+            if (R_SUCCEEDED(pctl_rc)) {
+                bool enabled = false, restricted = false;
+                u64 remaining_ns = 0;
+
+                printf("   Timer:    %s\n",
+                    (pctl_is_enabled(&enabled) == 0 && enabled) ? "Running" : "Stopped");
+
+                if (pctl_get_remaining_time(&remaining_ns) == 0 && remaining_ns > 0) {
+                    printf("   Remain:   %llu min\n", (unsigned long long)NS_TO_MINUTES(remaining_ns));
+                }
+
+                if (pctl_is_restricted(&restricted) == 0 && restricted) {
+                    printf("   STATUS:   ** BLOCKED **\n");
+                }
+            } else {
+                printf("   pctl: not available\n");
             }
+
+            printf("\n");
+            printf("   A: Refresh   B: Exit\n");
+            printSeparator();
+            consoleFlush();
         }
 
-        // Render menu (every frame to show live IP)
-        consoleClear();
-        printf("\n");
-        printSeparator();
-        printf("   Switch Parental Control Web\n");
-        printf("   v" VERSION_S " | by gmaitxqqq\n");
-        printSeparator();
-        printf("\n");
-
-        char ip_str[64];
-        getIpAddressStr(ip_str, sizeof(ip_str));
-        printf("   Web UI:  http://%s:%d\n", ip_str, HTTP_PORT);
-        printf("   TCP:     %s:%d\n", ip_str, TCP_PORT);
-        printf("   Clients: %u\n\n", tcp_server_client_count());
-        consoleFlush();
-
-        printf("   Menu:\n");
-        for (int i = 0; i < menu_count; i++) {
-            printf("   %s %s\n", (i == cursor) ? ">" : " ", menu_items[i]);
-        }
-        printf("\n   Open the Web URL on your phone!\n");
-        consoleFlush();
-
-        svcSleepThread(16000000ULL); // ~16fps
+        svcSleepThread(50000000ULL);
     }
 
     // Cleanup
+    printf("\n   Shutting down...\n");
+    consoleFlush();
+
     http_server_stop();
     tcp_server_stop();
-    pctl_exit();
+
+    if (R_SUCCEEDED(nifm_rc)) nifmExit();
+    if (R_SUCCEEDED(pctl_rc)) pctl_exit();
     socketExit();
     consoleExit(NULL);
-
     return 0;
 }

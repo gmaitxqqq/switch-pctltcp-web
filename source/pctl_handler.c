@@ -299,7 +299,7 @@ int pctl_get_today_day(void)
 Result pctl_get_daily_limit_minutes(u32 *minutes)
 {
     /* Read today's limit, not a hardcoded day=0 (Sun) */
-    int today = get_today_switch_day();
+    int today = pctl_get_today_day();
     return pctl_get_day_limit_minutes(today, minutes);
 }
 

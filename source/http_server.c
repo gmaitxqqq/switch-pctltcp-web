@@ -3,8 +3,10 @@
  *
  * REST API:
  *   GET  /              -> Embedded HTML UI
- *   GET  /api/status    -> JSON: {daily_limit_min, remaining_min}
- *   POST /api/set       -> Set today's limit (body: minutes=N)
+ *   GET  /api/status    -> JSON: {daily_limit_min, remaining_min, played_min}
+ *   POST /api/allow     -> Set how many more minutes to play
+ *                          body: minutes=N
+ *                          calc: new_limit = played_min + N
  */
 #include "http_server.h"
 #include "pctl_handler.h"
@@ -64,29 +66,56 @@ static int http_read_request(int fd, char *buf, int bufsize)
 static void api_status(int fd)
 {
     u64 remaining_ns = 0;
-    u32 daily_limit = 0;
+    u32 daily_limit  = 0;
 
     pctl_get_remaining_time(&remaining_ns);
     pctl_get_daily_limit_minutes(&daily_limit);
 
+    u32 remaining_min = (u32)NS_TO_MINUTES(remaining_ns);
+    /* played = limit - remaining (clamp to 0) */
+    u32 played_min = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
+
     char json[256];
     snprintf(json, sizeof(json),
-        "{\"daily_limit_min\":%u,\"remaining_min\":%llu}",
-        daily_limit, NS_TO_MINUTES(remaining_ns));
+        "{\"daily_limit_min\":%u,\"remaining_min\":%u,\"played_min\":%u}",
+        daily_limit, remaining_min, played_min);
 
     http_send(fd, "200 OK", "application/json", json);
 }
 
-static void api_set(int fd, const char *body)
+/*
+ * api_allow: user specifies how many MORE minutes the child may play.
+ * new_limit = played_min + allow_min
+ * If allow_min == 0 => unlimited (disable limit).
+ */
+static void api_allow(int fd, const char *body)
 {
-    unsigned int minutes = 0;
+    unsigned int allow_min = 0;
     const char *p = strstr(body, "minutes");
     if (p) {
         p = strchr(p + 7, '=');
-        if (p) minutes = (unsigned int)atoi(p + 1);
+        if (p) allow_min = (unsigned int)atoi(p + 1);
     }
 
-    Result rc = pctl_set_daily_limit_minutes(minutes);
+    Result rc;
+    if (allow_min == 0) {
+        /* 0 => remove limit (unlimited) */
+        rc = pctl_set_daily_limit_minutes(0);
+    } else {
+        /* Compute played time first */
+        u64 remaining_ns = 0;
+        u32 daily_limit  = 0;
+        pctl_get_remaining_time(&remaining_ns);
+        pctl_get_daily_limit_minutes(&daily_limit);
+
+        u32 remaining_min = (u32)NS_TO_MINUTES(remaining_ns);
+        u32 played_min    = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
+
+        u32 new_limit = played_min + allow_min;
+        if (new_limit > 1440) new_limit = 1440;
+
+        rc = pctl_set_daily_limit_minutes(new_limit);
+    }
 
     char json[128];
     snprintf(json, sizeof(json),
@@ -97,7 +126,7 @@ static void api_set(int fd, const char *body)
 }
 
 /* ------------------------------------------------------------------ */
-/* Embedded Web UI - Minimal                                           */
+/* Embedded Web UI                                                     */
 /* ------------------------------------------------------------------ */
 static const char *WEB_HTML =
 "<!DOCTYPE html>"
@@ -111,43 +140,59 @@ static const char *WEB_HTML =
 ".box{background:rgba(255,255,255,0.1);border-radius:12px;padding:20px;margin:15px 0}"
 ".big{font-size:2.5em;font-weight:bold;margin:10px 0}"
 ".lbl{color:rgba(255,255,255,0.6);font-size:0.9em}"
-"input{width:100px;font-size:1.5em;text-align:center;padding:8px;border:none;border-radius:8px;background:rgba(255,255,255,0.15);color:#fff}"
-"button{font-size:1.2em;padding:12px 30px;border:none;border-radius:8px;background:#3b82f6;color:#fff;margin-top:15px;cursor:pointer}"
+".row{display:flex;gap:10px;justify-content:center;margin:15px 0}"
+".tile{flex:1;background:rgba(255,255,255,0.08);border-radius:10px;padding:14px}"
+"input{width:90px;font-size:1.5em;text-align:center;padding:8px;border:none;border-radius:8px;background:rgba(255,255,255,0.15);color:#fff}"
+".btns{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:12px 0}"
+"button{font-size:1em;padding:10px 18px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer}"
 "button:active{transform:scale(0.95)}"
-"#msg{margin-top:10px;color:#fbbf24;font-size:0.9em;height:20px}"
+".btn-sm{background:#374151;font-size:0.9em;padding:8px 14px}"
+"#msg{margin-top:8px;color:#fbbf24;font-size:0.9em;min-height:20px}"
 "</style>"
 "</head>"
 "<body>"
 "<h2>Switch Parental Control</h2>"
 "<div class='box'>"
-"<div class='lbl'>Daily Limit</div>"
-"<div class='big' id='limit'>--</div>"
+"<div class='row'>"
+"<div class='tile'><div class='lbl'>Played</div><div class='big' id='played'>--</div></div>"
+"<div class='tile'><div class='lbl'>Remaining</div><div class='big' id='remain'>--</div></div>"
+"</div>"
+"<div class='lbl' style='margin-top:4px'>Limit: <span id='limit'>--</span> min</div>"
 "</div>"
 "<div class='box'>"
-"<div class='lbl'>Remaining</div>"
-"<div class='big' id='remain'>--</div>"
+"<div class='lbl'>Allow to play (minutes)</div>"
+"<input type='number' id='min' value='30' min='0' max='300'>"
+"<br>"
+"<div class='btns'>"
+"<button class='btn-sm' onclick='quickSet(15)'>+15</button>"
+"<button class='btn-sm' onclick='quickSet(30)'>+30</button>"
+"<button class='btn-sm' onclick='quickSet(60)'>+60</button>"
+"<button class='btn-sm' onclick='quickSet(90)'>+90</button>"
 "</div>"
-"<div class='box'>"
-"<div class='lbl'>Set Today's Limit (minutes)</div>"
-"<input type='number' id='min' value='60' min='0' max='1440'>"
-"<br><button onclick='setLimit()'>Set</button>"
+"<button onclick='allow()'>Confirm</button>"
 "<div id='msg'></div>"
 "</div>"
 "<script>"
 "function load(){"
 "fetch('/api/status').then(r=>r.json()).then(d=>{"
-"document.getElementById('limit').textContent=d.daily_limit_min+'m';"
+"document.getElementById('limit').textContent=d.daily_limit_min;"
 "document.getElementById('remain').textContent=d.remaining_min+'m';"
-"}).catch(e=>{document.getElementById('msg').textContent='Load failed'});"
+"document.getElementById('played').textContent=d.played_min+'m';"
+"}).catch(()=>{document.getElementById('msg').textContent='Load failed'});"
 "}"
-"function setLimit(){"
-"var m=document.getElementById('min').value;"
-"fetch('/api/set',{method:'POST',body:'minutes='+m}).then(r=>r.json()).then(d=>{"
-"document.getElementById('msg').textContent=d.success?'OK':'Failed';"
-"setTimeout(load,500);"
-"}).catch(e=>{document.getElementById('msg').textContent='Error'});"
+"function quickSet(m){"
+"document.getElementById('min').value=m;"
+"}"
+"function allow(){"
+"var m=parseInt(document.getElementById('min').value)||0;"
+"document.getElementById('msg').textContent='Saving...';"
+"fetch('/api/allow',{method:'POST',body:'minutes='+m}).then(r=>r.json()).then(d=>{"
+"document.getElementById('msg').textContent=d.success?'Done!':'Failed';"
+"setTimeout(function(){document.getElementById('msg').textContent='';load();},1200);"
+"}).catch(()=>{document.getElementById('msg').textContent='Error'});"
 "}"
 "load();"
+"setInterval(load,30000);"
 "</script>"
 "</body>"
 "</html>";
@@ -177,8 +222,8 @@ static void handle_request(int fd)
         http_send(fd, "200 OK", "text/html; charset=utf-8", WEB_HTML);
     } else if (strcmp(path, "/api/status") == 0) {
         api_status(fd);
-    } else if (strcmp(path, "/api/set") == 0) {
-        api_set(fd, body ? body : "");
+    } else if (strcmp(path, "/api/allow") == 0 && strcmp(method, "POST") == 0) {
+        api_allow(fd, body ? body : "");
     } else {
         http_send(fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
     }
@@ -254,13 +299,11 @@ void http_server_stop(void)
     s_running = false;
 
     if (s_server_fd >= 0) {
-        /* shutdown() wakes up select() in http_thread_func */
         shutdown(s_server_fd, SHUT_RDWR);
         close(s_server_fd);
         s_server_fd = -1;
     }
 
-    /* Wait for thread to finish before returning */
     pthread_join(s_thread, NULL);
 }
 

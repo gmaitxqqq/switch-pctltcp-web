@@ -3,10 +3,11 @@
  *
  * REST API:
  *   GET  /              -> Embedded HTML UI
- *   GET  /api/status    -> JSON: {daily_limit_min, remaining_min, played_min}
- *   POST /api/allow     -> Set how many more minutes to play
+ *   GET  /api/status    -> JSON: {daily_limit_min, remaining_min, played_min, today, today_name, version}
+ *   POST /api/allow     -> Add minutes to today's limit (additive)
  *                          body: minutes=N
- *                          calc: new_limit = played_min + N
+ *                          calc: new_limit = current_limit + N
+ *   Version: v1.3
  */
 #include "http_server.h"
 #include "pctl_handler.h"

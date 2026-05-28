@@ -284,7 +284,7 @@ Result pctl_set_daily_limit_minutes(u32 minutes)
  * Get today's day-of-week in Switch convention: 0=Sun, 1=Mon, ..., 6=Sat.
  * Falls back to 0 (Sun) on error.
  */
-static int get_today_switch_day(void)
+int pctl_get_today_day(void)
 {
     time_t t = time(NULL);
     if (t == (time_t)-1)

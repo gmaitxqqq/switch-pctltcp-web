@@ -98,6 +98,9 @@ Result pctl_set_day_limit_minutes(int day, u32 minutes);
  */
 Result pctl_set_daily_limit_minutes(u32 minutes);
 
+/** Get today's day index (0=Sun..6=Sat). */
+int pctl_get_today_day(void);
+
 /** Get current daily limit (returns first day's value). */
 Result pctl_get_daily_limit_minutes(u32 *minutes);
 

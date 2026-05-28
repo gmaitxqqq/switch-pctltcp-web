@@ -76,9 +76,11 @@ static void api_status(int fd)
     u32 played_min = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
 
     char json[256];
+    int today = pctl_get_today_day();
+    static const char *day_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     snprintf(json, sizeof(json),
-        "{\"daily_limit_min\":%u,\"remaining_min\":%u,\"played_min\":%u}",
-        daily_limit, remaining_min, played_min);
+        "{\"daily_limit_min\":%u,\"remaining_min\":%u,\"played_min\":%u,\"today\":%d,\"today_name\":\"%s\"}",
+        daily_limit, remaining_min, played_min, today, day_names[today]);
 
     http_send(fd, "200 OK", "application/json", json);
 }
@@ -100,7 +102,8 @@ static void api_allow(int fd, const char *body)
     Result rc;
     if (allow_min == 0) {
         /* 0 => remove limit (unlimited) */
-        rc = pctl_set_daily_limit_minutes(0);
+        int today = pctl_get_today_day();
+        rc = pctl_set_day_limit_minutes(today, 0);
     } else {
         /* Compute played time first */
         u64 remaining_ns = 0;
@@ -114,7 +117,8 @@ static void api_allow(int fd, const char *body)
         u32 new_limit = played_min + allow_min;
         if (new_limit > 1440) new_limit = 1440;
 
-        rc = pctl_set_daily_limit_minutes(new_limit);
+        int today = pctl_get_today_day();
+        rc = pctl_set_day_limit_minutes(today, new_limit);
     }
 
     char json[128];

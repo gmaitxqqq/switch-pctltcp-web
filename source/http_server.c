@@ -99,8 +99,8 @@ static void api_status(int fd)
 }
 
 /*
- * api_allow: user specifies how many MORE minutes the child may play.
- * new_limit = played_min + allow_min
+ * api_allow: user specifies how many MORE minutes to add on top of
+ * the current daily limit. Formula: new_limit = current_limit + allow_min.
  * If allow_min == 0 => unlimited (disable limit).
  */
 static void api_allow(int fd, const char *body)
@@ -113,24 +113,21 @@ static void api_allow(int fd, const char *body)
     }
 
     Result rc;
+    int today = pctl_get_today_day();
+
     if (allow_min == 0) {
         /* 0 => remove limit (unlimited) */
-        int today = pctl_get_today_day();
         rc = pctl_set_day_limit_minutes(today, 0);
     } else {
-        /* Compute played time first, with clamping */
-        u64 remaining_ns = 0;
-        u32 daily_limit  = 0;
-        pctl_get_remaining_time(&remaining_ns);
+        /* Simple formula: new_limit = current_limit + allow_min
+         * The system will keep the already-played time internally,
+         * so remaining will adjust accordingly. */
+        u32 daily_limit = 0;
         pctl_get_daily_limit_minutes(&daily_limit);
 
-        u32 remaining_min = clamp_remaining_min(remaining_ns);
-        u32 played_min    = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
-
-        u32 new_limit = played_min + allow_min;
+        u32 new_limit = daily_limit + allow_min;
         if (new_limit > 1440) new_limit = 1440;
 
-        int today = pctl_get_today_day();
         rc = pctl_set_day_limit_minutes(today, new_limit);
     }
 

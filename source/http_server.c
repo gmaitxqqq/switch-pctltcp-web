@@ -63,6 +63,20 @@ static int http_read_request(int fd, char *buf, int bufsize)
 /* ------------------------------------------------------------------ */
 /* API handlers                                                        */
 /* ------------------------------------------------------------------ */
+/* Clamp remaining to a sane value. When the timer is exhausted,
+ * Switch may return a very large value (overflow-like). Treat
+ * anything > 1440 min (24h) as "0 remaining". */
+static u32 clamp_remaining_min(u64 remaining_ns)
+{
+    if (remaining_ns == 0)
+        return 0;
+    /* If the raw nanoseconds value is larger than 24h, treat as 0
+     * (timer exhausted or invalid). 24h = 86400000000000 ns. */
+    if (remaining_ns > 86400000000000ULL)
+        return 0;
+    return (u32)NS_TO_MINUTES(remaining_ns);
+}
+
 static void api_status(int fd)
 {
     u64 remaining_ns = 0;
@@ -71,9 +85,8 @@ static void api_status(int fd)
     pctl_get_remaining_time(&remaining_ns);
     pctl_get_daily_limit_minutes(&daily_limit);
 
-    u32 remaining_min = (u32)NS_TO_MINUTES(remaining_ns);
-    /* played = limit - remaining (clamp to 0) */
-    u32 played_min = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
+    u32 remaining_min = clamp_remaining_min(remaining_ns);
+    u32 played_min    = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
 
     char json[256];
     int today = pctl_get_today_day();
@@ -105,13 +118,13 @@ static void api_allow(int fd, const char *body)
         int today = pctl_get_today_day();
         rc = pctl_set_day_limit_minutes(today, 0);
     } else {
-        /* Compute played time first */
+        /* Compute played time first, with clamping */
         u64 remaining_ns = 0;
         u32 daily_limit  = 0;
         pctl_get_remaining_time(&remaining_ns);
         pctl_get_daily_limit_minutes(&daily_limit);
 
-        u32 remaining_min = (u32)NS_TO_MINUTES(remaining_ns);
+        u32 remaining_min = clamp_remaining_min(remaining_ns);
         u32 played_min    = (daily_limit > remaining_min) ? (daily_limit - remaining_min) : 0;
 
         u32 new_limit = played_min + allow_min;

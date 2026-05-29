@@ -2,7 +2,7 @@
 
 手机浏览器直接管理 Switch 家长控制。Switch 上运行 `.nro` 启动 HTTP 服务（端口 8080），手机/平板打开网址即可操作，无需安装任何 App。
 
-**版本**：v1.0.0 | **固件**：兼容 Atmosphere 22.1.0+
+**版本**：v1.3.0 | **固件**：兼容 Atmosphere 22.1.0+
 
 ---
 
@@ -14,8 +14,8 @@
 
 ## 安装
 
-1. 从 [Releases](../../releases) 下载 `pctltcp-web.nro`
-2. 复制到 SD 卡 `/switch/` 目录
+1. 从 [Releases](../../releases) 下载 `pctltcp-web-release.zip`
+2. 解压得到 `pctltcp-web.nro`，复制到 SD 卡 `/switch/` 目录
 3. Homebrew Menu 启动
 
 ---
@@ -28,10 +28,10 @@
 
 ### Web UI 功能
 
-- 查看实时计时状态（运行/暂停、剩余时间）
-- 按天设置每日时间限制（周日至周六）
-- 统一设置所有天相同限额
-- 启动 / 暂停 / 重置计时器
+- 查看今日已玩时间、剩余时间、当日限额
+- **累加设置**：输入想增加的分钟数，自动叠加到当前限额（+15/+30/+60/+90 快捷按钮）
+- 输入 0 可解除当日限制（设为无限）
+- 每 30 秒自动刷新状态
 
 ---
 
@@ -42,11 +42,33 @@
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/` | Web UI 页面 |
-| GET | `/api/status` | 计时器状态（JSON） |
-| GET | `/api/settings` | 7 天限额设置（JSON） |
-| POST | `/api/set` | 设置所有天：`{"minutes": 60}` |
-| POST | `/api/set_day` | 设置某天：`{"day": 0, "minutes": 60}` |
-| GET | `/api/version` | 版本号 |
+| GET | `/api/status` | 当前状态（JSON） |
+| POST | `/api/allow` | 累加今日限额：`minutes=N`（0=解除限制） |
+
+### `/api/status` 响应示例
+
+```json
+{
+  "daily_limit_min": 60,
+  "remaining_min": 45,
+  "played_min": 15,
+  "today": 6,
+  "today_name": "Sat",
+  "version": "v1.3"
+}
+```
+
+### `/api/allow` 请求
+
+```
+POST /api/allow
+Content-Type: application/x-www-form-urlencoded
+
+minutes=30
+```
+
+- `minutes=N`：在当前限额基础上增加 N 分钟（上限 1440）
+- `minutes=0`：解除当日限制（设为无限）
 
 ---
 
@@ -60,7 +82,7 @@ switch-pctltcp-web/
 │   └── pctl_handler.c/h    # pctl IPC 封装
 ├── pctltcp-web.icon        # NRO 图标
 ├── pctltcp-web.jpg         # NRO 图标源图
-├── config.json             # NRO 元数据
+├── pctltcp-web.json        # NRO 元数据
 └── Makefile
 ```
 
@@ -92,4 +114,5 @@ make
 
 | 版本 | 变更 |
 |------|------|
-| **v1.0.0** | 首个正式版：移动端 Web UI、REST API、暗色主题 |
+| **v1.3.0** | 累加模式设置（而非重置）；只设当天而非全部7天；修复计时器耗尽后溢出；修复星期读取 |
+| **v1.0.0** | 首个正式版：移动端 Web UI、暗色主题 |

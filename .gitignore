@@ -1,5 +1,21 @@
-/build/
-/*.nro
-/*.elf
-/*.nacp
-/*.zip
+# Build output
+build/
+*.elf
+*.nro
+*.nacp
+*.nso
+*.nsp
+*.npdm
+*.map
+*.nrr
+
+# Archives
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
